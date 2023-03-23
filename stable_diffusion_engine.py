@@ -1,4 +1,6 @@
 import inspect
+import torch
+from pathlib import Path
 import numpy as np
 # openvino
 from openvino.runtime import Core
@@ -30,29 +32,43 @@ class StableDiffusionEngine:
         self.core.set_property({'CACHE_DIR': './cache'})
 
         # text features
-        self._text_encoder = self.core.read_model(
-            hf_hub_download(repo_id=model, filename="text_encoder.xml"),
-            hf_hub_download(repo_id=model, filename="text_encoder.bin")
-        )
+        if (Path(model) /  "text_encoder.xml").exists():
+            self._text_encoder = self.core.read_model(f"{model}/text_encoder.xml")
+        else:
+            self._text_encoder = self.core.read_model(
+                hf_hub_download(repo_id=model, filename="text_encoder.xml"),
+                hf_hub_download(repo_id=model, filename="text_encoder.bin")
+            )
         self.text_encoder = self.core.compile_model(self._text_encoder, device)
         # diffusion
-        self._unet = self.core.read_model(
-            hf_hub_download(repo_id=model, filename="unet.xml"),
-            hf_hub_download(repo_id=model, filename="unet.bin")
-        )
+        if (Path(model) /  "unet.xml").exists():
+            self._unet = self.core.read_model(f"{model}/unet.xml")
+        else:
+            self._unet = self.core.read_model(
+                hf_hub_download(repo_id=model, filename="unet.xml"),
+                hf_hub_download(repo_id=model, filename="unet.bin")
+            )
         self.unet = self.core.compile_model(self._unet, device)
         self.latent_shape = tuple(self._unet.inputs[0].shape)[1:]
+        if (Path(model) / "vae_decoder.xml").exists():
+            self._vae_decoder = self.core.read_model(
+               f"{model}/vae_decoder.xml"
+            )
+        else:
         # decoder
-        self._vae_decoder = self.core.read_model(
-            hf_hub_download(repo_id=model, filename="vae_decoder.xml"),
-            hf_hub_download(repo_id=model, filename="vae_decoder.bin")
-        )
+            self._vae_decoder = self.core.read_model(
+                hf_hub_download(repo_id=model, filename="vae_decoder.xml"),
+                hf_hub_download(repo_id=model, filename="vae_decoder.bin")
+            )
         self.vae_decoder = self.core.compile_model(self._vae_decoder, device)
-        # encoder
-        self._vae_encoder = self.core.read_model(
-            hf_hub_download(repo_id=model, filename="vae_encoder.xml"),
-            hf_hub_download(repo_id=model, filename="vae_encoder.bin")
-        )
+        if (Path(model) / "vae_encoder.xml").exists():
+            self._vae_encoder = self.core.read_model( f"{model}/vae_encoder.xml")
+        else:
+            # encoder
+            self._vae_encoder = self.core.read_model(
+                hf_hub_download(repo_id=model, filename="vae_encoder.xml"),
+                hf_hub_download(repo_id=model, filename="vae_encoder.bin")
+            )
         self.vae_encoder = self.core.compile_model(self._vae_encoder, device)
         self.init_image_shape = tuple(self._vae_encoder.inputs[0].shape)[2:]
 
@@ -163,7 +179,7 @@ class StableDiffusionEngine:
 
         # if we use LMSDiscreteScheduler, let's make sure latents are mulitplied by sigmas
         if isinstance(self.scheduler, LMSDiscreteScheduler):
-            latents = latents * self.scheduler.sigmas[0]
+            latents = latents * self.scheduler.sigmas[0].numpy()
 
         # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
         # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
@@ -179,7 +195,7 @@ class StableDiffusionEngine:
             # expand the latents if we are doing classifier free guidance
             latent_model_input = np.stack([latents, latents], 0) if guidance_scale > 1.0 else latents[None]
             if isinstance(self.scheduler, LMSDiscreteScheduler):
-                sigma = self.scheduler.sigmas[i]
+                sigma = self.scheduler.sigmas[i].numpy()
                 latent_model_input = latent_model_input / ((sigma**2 + 1) ** 0.5)
 
             # predict the noise residual
@@ -195,9 +211,9 @@ class StableDiffusionEngine:
 
             # compute the previous noisy sample x_t -> x_t-1
             if isinstance(self.scheduler, LMSDiscreteScheduler):
-                latents = self.scheduler.step(noise_pred, i, latents, **extra_step_kwargs)["prev_sample"]
+                latents = self.scheduler.step(torch.from_numpy(noise_pred), torch.tensor(i), torch.from_numpy(latents), **extra_step_kwargs)["prev_sample"].numpy()
             else:
-                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs)["prev_sample"]
+                latents = self.scheduler.step(torch.from_numpy(noise_pred), t, torch.from_numpy(latents), **extra_step_kwargs)["prev_sample"].numpy()
 
             # masking for inapinting
             if mask is not None:
@@ -205,10 +221,11 @@ class StableDiffusionEngine:
                 latents = ((init_latents_proper * mask) + (latents * (1 - mask)))[0]
 
         image = result(self.vae_decoder.infer_new_request({
-            "latents": np.expand_dims(latents, 0)
+            "latents": np.expand_dims(latents, 0) * (1/ 0.18215)
         }))
 
         # convert tensor to opencv's image format
         image = (image / 2 + 0.5).clip(0, 1)
         image = (image[0].transpose(1, 2, 0)[:, :, ::-1] * 255).astype(np.uint8)
         return image
+

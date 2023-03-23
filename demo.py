@@ -6,7 +6,7 @@ import random
 # engine
 from stable_diffusion_engine import StableDiffusionEngine
 # scheduler
-from diffusers import LMSDiscreteScheduler, PNDMScheduler
+from diffusers import LMSDiscreteScheduler, PNDMScheduler, DPMSolverMultistepScheduler
 # utils
 import cv2
 import numpy as np
@@ -18,11 +18,19 @@ def main(args):
         args.seed = random.randint(0, 2**30)
     np.random.seed(args.seed)
     if args.init_image is None:
-        scheduler = LMSDiscreteScheduler(
-            beta_start=args.beta_start,
-            beta_end=args.beta_end,
-            beta_schedule=args.beta_schedule,
-            tensor_format="np"
+        scheduler = DPMSolverMultistepScheduler.from_config(
+            {
+                "beta_end": args.beta_start,
+                "beta_schedule": args.beta_schedule,
+                "beta_start": args.beta_start,
+                "clip_sample": False,
+                "num_train_timesteps": 1000,
+                "prediction_type": "v_prediction",
+                "set_alpha_to_one": False,
+                "skip_prk_steps": True,
+                "steps_offset": 1,
+                "trained_betas": None
+            }
         )
     else:
         scheduler = PNDMScheduler(
@@ -81,3 +89,4 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, default="output.png", help="output image name")
     args = parser.parse_args()
     main(args)
+
