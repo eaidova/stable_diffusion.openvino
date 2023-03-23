@@ -124,7 +124,8 @@ class StableDiffusionEngine:
             strength = 0.5,
             num_inference_steps = 32,
             guidance_scale = 7.5,
-            eta = 0.0
+            eta = 0.0,
+            negative_prompt=None
     ):
         # extract condition
         tokens = self.tokenizer(
@@ -139,8 +140,9 @@ class StableDiffusionEngine:
 
         # do classifier free guidance
         if guidance_scale > 1.0:
+            negative_prompt = negative_prompt or ""
             tokens_uncond = self.tokenizer(
-                "",
+                negative_prompt,
                 padding="max_length",
                 max_length=self.tokenizer.model_max_length,
                 truncation=True
@@ -213,7 +215,7 @@ class StableDiffusionEngine:
             if isinstance(self.scheduler, LMSDiscreteScheduler):
                 latents = self.scheduler.step(torch.from_numpy(noise_pred), torch.tensor(i), torch.from_numpy(latents), **extra_step_kwargs)["prev_sample"].numpy()
             else:
-                latents = self.scheduler.step(torch.from_numpy(noise_pred), t, torch.from_numpy(latents), **extra_step_kwargs)["prev_sample"].numpy()
+                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs)["prev_sample"]
 
             # masking for inapinting
             if mask is not None:

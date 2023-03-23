@@ -1,13 +1,10 @@
 # -- coding: utf-8 --`
 import argparse
-import os
-import json
 import random
 # engine
 from stable_diffusion_engine import StableDiffusionEngine
 # scheduler
-from diffusers import LMSDiscreteScheduler, PNDMScheduler, DPMSolverMultistepScheduler
-# utils
+from diffusers import DPMSolverMultistepScheduler, PNDMScheduler, LMSDiscreteScheduler
 import cv2
 import numpy as np
 from openvino.runtime import Core
@@ -18,19 +15,10 @@ def main(args):
         args.seed = random.randint(0, 2**30)
     np.random.seed(args.seed)
     if args.init_image is None:
-        scheduler = DPMSolverMultistepScheduler.from_config(
-            {
-                "beta_end": args.beta_start,
-                "beta_schedule": args.beta_schedule,
-                "beta_start": args.beta_start,
-                "clip_sample": False,
-                "num_train_timesteps": 1000,
-                "prediction_type": "v_prediction",
-                "set_alpha_to_one": False,
-                "skip_prk_steps": True,
-                "steps_offset": 1,
-                "trained_betas": None
-            }
+        scheduler_cls = LMSDiscreteScheduler if args.prediction_type == "epsilon" else DPMSolverMultistepScheduler
+        scheduler = scheduler_cls.from_config({
+            'beta_end':args.beta_end, 'beta_schedule': args.beta_schedule, 
+            'beta_start': args.beta_start, 'prediction_type': args.prediction_type}
         )
     else:
         scheduler = PNDMScheduler(
@@ -48,6 +36,7 @@ def main(args):
     )
     image = engine(
         prompt=args.prompt,
+        negative_prompt=args.negative_prompt,
         init_image=None if args.init_image is None else cv2.imread(args.init_image),
         mask=None if args.mask is None else cv2.imread(args.mask, 0),
         strength=args.strength,
@@ -70,6 +59,7 @@ if __name__ == "__main__":
     parser.add_argument("--beta-start", type=float, default=0.00085, help="LMSDiscreteScheduler::beta_start")
     parser.add_argument("--beta-end", type=float, default=0.012, help="LMSDiscreteScheduler::beta_end")
     parser.add_argument("--beta-schedule", type=str, default="scaled_linear", help="LMSDiscreteScheduler::beta_schedule")
+    parser.add_argument("--prediction_type", choices=["epsilon", "v_prediction"], default="epsilon")
     # diffusion params
     parser.add_argument("--num-inference-steps", type=int, default=32, help="num inference steps")
     parser.add_argument("--guidance-scale", type=float, default=7.5, help="guidance scale")
@@ -78,6 +68,7 @@ if __name__ == "__main__":
     parser.add_argument("--tokenizer", type=str, default="openai/clip-vit-large-patch14", help="tokenizer")
     # prompt
     parser.add_argument("--prompt", type=str, default="Street-art painting of Emilia Clarke in style of Banksy, photorealism", help="prompt")
+    parser.add_argument("--negative_prompt", type=str, default="", help="prompt")
     # Parameter re-use:
     parser.add_argument("--params-from", type=str, required=False, help="Extract parameters from a previously generated image.")
     # img2img params
